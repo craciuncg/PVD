@@ -193,7 +193,11 @@ class ZeroConv(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-class PVCNN2BaseText(nn.Module):
+def freeze_module(model: nn.Module):
+    for param in model.parameters():
+        param.requires_grad = False
+
+class PVCNN2Base(nn.Module):
 
     def __init__(self, num_classes, embed_dim, use_att, dropout=0.1,
                  extra_feature_channels=3, width_multiplier=1, voxel_resolution_multiplier=1,
@@ -208,7 +212,7 @@ class PVCNN2BaseText(nn.Module):
             use_att=use_att, dropout=dropout,
             width_multiplier=width_multiplier, voxel_resolution_multiplier=voxel_resolution_multiplier
         )
-        self.sa_layers = nn.ModuleList(sa_layers)
+        self.sa_layers = nn.ModuleList(sa_layers).requires_grad_(False)
 
         self.global_att = None if not use_att else Attention(channels_sa_features, 8, D=1)
 
@@ -249,9 +253,24 @@ class PVCNN2BaseText(nn.Module):
             self.condition_decoder.append(ZeroConv(in_channels, out_channels).cuda())
         
         self.condition_middle_conv = None
-        self.condition_middle = deepcopy(self.global_att)
         if self.global_att is not None:
+            self.condition_middle = deepcopy(self.global_att)
             self.condition_middle_conv = ZeroConv(self.global_att.q.in_channels, self.global_att.q.in_channels)
+
+        # Freezing Parameters
+        # Decoder
+        freeze_module(self.fp_layers)
+        
+        # Encoder
+        freeze_module(self.sa_layers)
+        
+        # Attention
+        if self.global_att is not None:
+            freeze_module(self.global_att)
+        
+        # Positional Encoding
+        freeze_module(self.embedf)
+        
         
     def get_timestep_embedding(self, timesteps, device):
         assert len(timesteps.shape) == 1  # and timesteps.dtype == tf.int32
@@ -314,7 +333,8 @@ class PVCNN2BaseText(nn.Module):
         cond_sa_outputs = list(reversed(cond_sa_outputs))
         
         if self.global_att is not None:
-            features = self.global_att(features)
+            with torch.no_grad():
+                features = self.global_att(features)
             features = features + self.condition_middle_conv(self.condition_middle(cond_features))
             
         
@@ -327,7 +347,7 @@ class PVCNN2BaseText(nn.Module):
 
         return self.classifier(features)
 
-class PVCNN2Text(PVCNN2BaseText):
+class PVCNN2(PVCNN2Base):
     sa_blocks = [
         ((32, 2, 32), (1024, 0.1, 32, (32, 64))),
         ((64, 3, 16), (256, 0.2, 32, (64, 128))),
@@ -355,27 +375,27 @@ class PVCNN2Text(PVCNN2BaseText):
 
 # print(model(inputs))
 
-device='cuda'
+# device='cuda'
 
-clip_model, preprocess = clip.load("ViT-B/32", device=device)
+# clip_model, preprocess = clip.load("ViT-B/32", device=device)
 
-texts = ["A photo of a cat"]
+# texts = ["A photo of a cat"]
 
-text_tokens = clip.tokenize(texts).to(device)
+# text_tokens = clip.tokenize(texts).to(device)
 
-with torch.no_grad():
-    text_features = clip_model.encode_text(text_tokens).cuda()
+# with torch.no_grad():
+#     text_features = clip_model.encode_text(text_tokens).cuda()
 
-model = PVCNN2Text(
-    num_classes=3,
-    embed_dim=64,
-    use_att=True,
-    dropout=0.1
-).cuda()
+# model = PVCNN2(
+#     num_classes=3,
+#     embed_dim=64,
+#     use_att=True,
+#     dropout=0.1
+# ).cuda()
 
-inputs = torch.randn(size=(1, model.in_channels, 10)).cuda()
+# inputs = torch.randn(size=(1, model.in_channels, 10)).cuda()
 
-print(model((inputs, text_features), torch.tensor([2]).cuda()))
+# print(model((inputs, text_features), torch.tensor([2]).cuda()))
 
 # print(model(inputs, torch.tensor([0]).cuda()))
 # print(text_features)
