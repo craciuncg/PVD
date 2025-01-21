@@ -248,6 +248,11 @@ class PVCNN2BaseText(nn.Module):
             out_channels = fp_blocks[0].mlp.layers[0].in_channels - sa_in_channels[-1 - fp_idx] - embed_dim
             self.condition_decoder.append(ZeroConv(in_channels, out_channels).cuda())
         
+        self.condition_middle_conv = None
+        self.condition_middle = deepcopy(self.global_att)
+        if self.global_att is not None:
+            self.condition_middle_conv = ZeroConv(self.global_att.q.in_channels, self.global_att.q.in_channels)
+        
     def get_timestep_embedding(self, timesteps, device):
         assert len(timesteps.shape) == 1  # and timesteps.dtype == tf.int32
 
@@ -310,6 +315,7 @@ class PVCNN2BaseText(nn.Module):
         
         if self.global_att is not None:
             features = self.global_att(features)
+            features = features + self.condition_middle_conv(self.condition_middle(cond_features))
             
         
         for fp_idx, (fp_blocks, cond_block, cond_sa_out) in enumerate(zip(self.fp_layers, self.condition_decoder, cond_sa_outputs)):
@@ -349,9 +355,6 @@ class PVCNN2Text(PVCNN2BaseText):
 
 # print(model(inputs))
 
-# TODO (Maybe): Clone the Attention block too,
-# create zero-conv for it
-# add it to the output of the Attention block of the original net
 device='cuda'
 
 clip_model, preprocess = clip.load("ViT-B/32", device=device)
@@ -372,7 +375,7 @@ model = PVCNN2Text(
 
 inputs = torch.randn(size=(1, model.in_channels, 10)).cuda()
 
-model((inputs, text_features), torch.tensor([0]).cuda())
+print(model((inputs, text_features), torch.tensor([2]).cuda()))
 
 # print(model(inputs, torch.tensor([0]).cuda()))
 # print(text_features)
